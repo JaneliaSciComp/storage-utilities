@@ -1,2 +1,2 @@
-# nf-starter-template
-Starter template for Nextflow pipelines
+# storage-utilities
+Utilities for storage monitoring
