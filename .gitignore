@@ -1,0 +1,8 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Editors and OS
+*.swp
+.DS_Store
