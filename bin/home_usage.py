@@ -6,10 +6,11 @@
     2-3 hours after one (or more) of those times.
 '''
 
-__version__ = '0.0.1'
+__version__ = '1.2.0'
 
 import argparse
 from datetime import datetime, timedelta
+from html import escape
 from operator import attrgetter
 import os
 import sys
@@ -28,6 +29,8 @@ DAY = 3600 * 24
 DB = {}
 # Email
 SENDER = 'donotreply@hhmi.org'
+DEVELOPER = 'svirskasr@hhmi.org'
+WIKI_URL = 'https://hhmi.atlassian.net/wiki/spaces/SCSW/pages/156055444/Network+Storage'
 
 def terminate_program(msg=None):
     ''' Terminate the program gracefully
@@ -103,16 +106,29 @@ def generate_email(userid, work, consumed):
         Returns:
           None
     '''
-    msg = f"{work['first']};\n" \
-          + f"You are using {consumed} in your home directory. Please help "\
-          + "Scientific Computing Software by decreasing your disk usage to " \
-          + f"{ARG.LIMIT}TB or less. Thanks for your cooperation.\n" \
-          + "Regards,\n    Some annoying program"
+    recipient = work['email']
+    subject = "Disk space warning"
+    banner = ''
+    if ARG.TEST:
+        banner = f"<p><b>[TEST] This message would have been sent to {escape(recipient)}</b></p>"
+        recipient = DEVELOPER
+        subject = "[TEST] " + subject
+    msg = f'''{banner}<p>Hi {escape(work['first'])},</p>
+<p>You are using {escape(consumed)} in your home directory. When the home share fills up,
+it causes problems for everyone. Please help us by decreasing your disk usage to
+{ARG.LIMIT}TiB or less. For more information on where your data can be stored,
+please see <a href="{WIKI_URL}">the wiki</a>.</p>
+<p>Regards,<br>
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Management</p>
+'''
     try:
-        LOGGER.info(f"Sending email to {work['email']}")
-        JRC.send_email(msg, SENDER, [work['email']], "Disk space warning")
+        LOGGER.info(f"Sending email to {recipient}")
+        JRC.send_email(msg, SENDER, [recipient], subject, mime='html')
     except Exception as err:
         LOGGER.error(err)
+        return
+    if ARG.TEST:
+        # Don't record the notification, or real users would be suppressed for 24 hours
         return
     payload = {'userId': userid,
                'size': consumed,
@@ -135,10 +151,15 @@ def notify_allowed(userid, work):
     '''
     # Is the user in Workday?
     if not work or 'config' not in work:
+        LOGGER.warning(f"{userid} was not found in Workday")
         return False
     # Is the user active?
-    if work['config']['active'] != 'Y':
+    if work['config'].get('active') != 'Y':
+        LOGGER.warning(f"{userid} is not active in Workday")
         return False
+    if ARG.TEST:
+        # Testing: ignore the 24 hour limit so the developer can run repeatedly
+        return True
     coll = DB['storage'].overage
     try:
         result = coll.find_one({'userId': userid})
@@ -161,18 +182,18 @@ def process_usage():
           None
     '''
     resp = call_responder('starfish', attrgetter(f"starfish.query.{ARG.GROUP}")(REST))
+    if resp is None:
+        terminate_program(f"No usage data returned for group {ARG.GROUP}")
     for usr in resp:
         if usr['rec_aggrs']['size'] > ARG.LIMIT * (1024 ** 4):
-            try:
-                data = call_responder("config", "config/workday/" + usr['fn'])
-            except requests.HTTPError:
-                terminate_program(f"User {usr['fn']} was not found in Workday")
+            # Returns None if the user isn't in Workday (handled in notify_allowed)
+            data = call_responder("config", "config/workday/" + usr['fn'])
             if not notify_allowed(usr['fn'], data):
                 print(f"{Fore.YELLOW}{usr['fn']:<16}  {usr['rec_aggrs']['size_hum']}" \
                       + Style.RESET_ALL)
                 continue
             print(f"{Fore.RED}{usr['fn']:<16}  {usr['rec_aggrs']['size_hum']}{Style.RESET_ALL}")
-            if ARG.WRITE:
+            if ARG.WRITE or ARG.TEST:
                 generate_email(usr['fn'], data['config'], usr['rec_aggrs']['size_hum'])
         else:
             print(f"{Fore.GREEN}{usr['fn']:<16}  {usr['rec_aggrs']['size_hum']}{Style.RESET_ALL}")
@@ -189,6 +210,9 @@ if __name__ == '__main__':
                         help='Group to check')
     PARSER.add_argument('--write', dest='WRITE', action='store_true',
                         default=False, help='Send email')
+    PARSER.add_argument('--test', dest='TEST', action='store_true',
+                        default=False, help=f"Send email only to {DEVELOPER} "
+                        + "(ignores 24 hour limit, doesn't record notifications)")
     PARSER.add_argument('--verbose', dest='VERBOSE', action='store_true',
                         default=False, help='Flag, Chatty')
     PARSER.add_argument('--debug', dest='DEBUG', action='store_true',

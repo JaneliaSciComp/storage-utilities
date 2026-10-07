@@ -1,0 +1,14 @@
+.git
+.gitignore
+.dockerignore
+Dockerfile
+*.md
+LICENSE
+update_*.sh
+
+# Local development artifacts
+**/venv
+**/__pycache__
+**/*.pyc
+**/*.swp
+**/.DS_Store
